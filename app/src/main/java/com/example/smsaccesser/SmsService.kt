@@ -1,5 +1,6 @@
 package com.example.smsaccesser
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,14 +8,14 @@ import android.app.Service
 import android.content.Intent
 import android.os.IBinder
 import android.provider.Telephony
-import android.telephony.SubscriptionManager
+import androidx.work.*
 import com.example.smsaccesser.database.SmsEntity
 import com.example.smsaccesser.database.SmsRepository
 import com.example.smsaccesser.utils.SimUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.concurrent.TimeUnit
 
 class SmsService : Service() {
 
@@ -25,6 +26,7 @@ class SmsService : Service() {
         repository = SmsRepository.getInstance(applicationContext)
         createNotificationChannel()
         startForeground(1, createNotification())
+        schedulePeriodicSync()
     }
 
     private fun createNotificationChannel() {
@@ -46,6 +48,9 @@ class SmsService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        CoroutineScope(Dispatchers.IO).launch {
+            syncDeletedMessages()
+        }
         listenForNewMessages()
         return START_STICKY
     }
@@ -58,7 +63,7 @@ class SmsService : Service() {
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
-                delay(60000) // Wait for 1 minute before syncing again
+                kotlinx.coroutines.delay(60000) // Wait for 1 minute before syncing again
             }
         }
     }
@@ -66,9 +71,9 @@ class SmsService : Service() {
     private suspend fun syncMessagesWithDevice() {
         val deviceMessageIds = mutableListOf<Long>()
 
-        // Get the SubscriptionManager instance
+        // Get SubscriptionManager instance
         val subscriptionManager =
-            getSystemService(TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
+            getSystemService(TELEPHONY_SUBSCRIPTION_SERVICE) as android.telephony.SubscriptionManager
 
         // Query the native SMS database
         val cursor = contentResolver.query(
@@ -79,17 +84,15 @@ class SmsService : Service() {
                 Telephony.Sms.BODY,
                 Telephony.Sms.DATE,
                 Telephony.Sms.TYPE,
-                Telephony.Sms.THREAD_ID,       // Fetch THREAD_ID
-                Telephony.Sms.SUBSCRIPTION_ID  // Fetch SIM subscription ID
+                Telephony.Sms.THREAD_ID,
+                Telephony.Sms.SUBSCRIPTION_ID
             ),
             null,
             null,
-            "${Telephony.Sms.DATE} ASC" // Sort by ascending date
+            "${Telephony.Sms.DATE} DESC"
         )
 
-        // Use a map to group messages by THREAD_ID
-        val messageMap = mutableMapOf<Long, SmsEntity>()
-
+        val deviceMessages = mutableListOf<SmsEntity>()
         cursor?.use {
             val idColumn = it.getColumnIndex(Telephony.Sms._ID)
             val threadIdColumn = it.getColumnIndex(Telephony.Sms.THREAD_ID)
@@ -101,43 +104,63 @@ class SmsService : Service() {
 
             while (it.moveToNext()) {
                 val id = it.getLong(idColumn)
-                val threadId = it.getLong(threadIdColumn) // Group by THREAD_ID
+                val threadId = it.getLong(threadIdColumn)
                 val address = it.getString(addressColumn)
                 val body = it.getString(bodyColumn)
                 val date = it.getLong(dateColumn)
                 val type = it.getInt(typeColumn)
                 val subscriptionId = it.getInt(subIdColumn)
 
-                // Map subscription ID to SIM slot
                 val simSlot =
                     SimUtils.getSimSlot(this@SmsService, subscriptionManager, subscriptionId)
 
-                // Combine messages with the same THREAD_ID
-                if (messageMap.containsKey(threadId)) {
-                    val existingMessage = messageMap[threadId]
-                    val combinedBody = existingMessage?.body + " " + body // Append the body
-                    messageMap[threadId] = existingMessage?.copy(body = combinedBody) ?: continue
-                } else {
-                    // Create a new SmsEntity
-                    val smsEntity = SmsEntity(
-                        id = id,
-                        threadId = threadId,
-                        address = address,
-                        body = body,
-                        date = date,
-                        type = type,
-                        simSlot = simSlot
-                    )
-                    messageMap[threadId] = smsEntity
-                }
-
+                val smsEntity = SmsEntity(
+                    id = id,
+                    threadId = threadId,
+                    address = address,
+                    body = body,
+                    date = date,
+                    type = type,
+                    simSlot = simSlot
+                )
+                deviceMessages.add(smsEntity)
                 deviceMessageIds.add(id)
             }
         }
 
-        // Sync with Room database
-        repository.saveMessages(messageMap.values.toList()) // Insert combined messages
-        repository.deleteMissingMessages(deviceMessageIds) // Remove messages not in the device
+        // Sync messages to Room database
+        repository.saveMessages(deviceMessages)
+        repository.deleteMissingMessages(deviceMessageIds)
+    }
+
+    @SuppressLint("Range")
+    private suspend fun syncDeletedMessages() {
+        val cursor = contentResolver.query(
+            Telephony.Sms.CONTENT_URI,
+            arrayOf(Telephony.Sms._ID),
+            null,
+            null,
+            null
+        )
+
+        val nativeIds = mutableSetOf<Long>()
+        cursor?.use {
+            while (it.moveToNext()) {
+                nativeIds.add(it.getLong(it.getColumnIndex(Telephony.Sms._ID)))
+            }
+        }
+
+        repository.deleteMissingMessages(nativeIds.toList())
+    }
+
+    private fun schedulePeriodicSync() {
+        val workRequest = PeriodicWorkRequestBuilder<PeriodicSyncWorker>(15, TimeUnit.MINUTES)
+            .build()
+        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
+            "SmsSyncWorker",
+            ExistingPeriodicWorkPolicy.REPLACE,
+            workRequest
+        )
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
