@@ -4,6 +4,16 @@ The **Message-Manager App** is an Android application designed to access, manage
 
 ---
 
+## Screenshots
+
+- **Main Page**<br>
+<img src="https://i.imgur.com/uU4TcU5.jpeg" alt="Main Screen" style="width:50%; height:auto;">
+
+- **Send SMS**<br>
+<img src="https://i.imgur.com/E2z5cNR.jpeg" alt="Send SMS Screen" style="width:50%; height:auto;">
+
+---
+
 ## Features
 
 - **View SMS Messages**:
@@ -104,16 +114,6 @@ The app requires the following permissions:
 **READ_PHONE_STATE**: To determine the SIM slot used for sending messages.
 
 **RECEIVE_SMS**: To listen for incoming SMS messages.
-
----
-
-## Screenshots
-
-- **Main Page**<br>
-<img src="https://i.imgur.com/uU4TcU5.jpeg" alt="Main Screen" style="width:50%; height:auto;">
-
-- **Send SMS**<br>
-<img src="https://i.imgur.com/E2z5cNR.jpeg" alt="Send SMS Screen" style="width:50%; height:auto;">
 
 ---
 
