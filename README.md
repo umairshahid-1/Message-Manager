@@ -110,10 +110,10 @@ The app requires the following permissions:
 ## Screenshots
 
 - **Main Page**<br>
-![Main Screen](https://i.imgur.com/uU4TcU5.jpeg)
+<img src="https://i.imgur.com/uU4TcU5.jpeg" alt="Main Screen" style="width:50%; height:auto;">
 
 - **Send SMS**<br>
-![Send SMS Screen](https://i.imgur.com/E2z5cNR.jpeg)
+<img src="https://i.imgur.com/E2z5cNR.jpeg" alt="Send SMS Screen" style="width:50%; height:auto;">
 
 ---
 
