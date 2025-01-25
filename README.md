@@ -108,11 +108,12 @@ The app requires the following permissions:
 ---
 
 ## Screenshots
-- **Main Page**
-- https://i.imgur.com/uU4TcU5.jpeg
 
-- **Send SMS**
-- https://i.imgur.com/E2z5cNR.jpeg
+- **Main Page**<br>
+![Main Screen](https://i.imgur.com/uU4TcU5.jpeg)
+
+- **Send SMS**<br>
+![Send SMS Screen](https://i.imgur.com/E2z5cNR.jpeg)
 
 ---
 
