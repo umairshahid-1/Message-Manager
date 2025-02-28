@@ -62,6 +62,4 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)  // Use ksp instead of kapt
-
-    implementation(libs.workRuntimeKtx)
 }

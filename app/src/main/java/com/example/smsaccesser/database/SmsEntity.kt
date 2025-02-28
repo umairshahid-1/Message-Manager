@@ -10,6 +10,7 @@ data class SmsEntity(
     @PrimaryKey val id: Long,
     val threadId: Long,       // Add Thread ID to group multipart messages
     val address: String?,
+    val contactName: String?,
     val body: String,
     val type: Int,            // 1 for received, 2 for sent
     val date: Long,

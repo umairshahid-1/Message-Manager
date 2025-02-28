@@ -5,12 +5,14 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.Telephony
 import android.telephony.SubscriptionManager
+import android.util.Log
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.smsaccesser.database.SmsEntity
 import com.example.smsaccesser.database.SmsRepository
+import com.example.smsaccesser.utils.SimUtils.getContactName
 import kotlinx.coroutines.launch
 import com.example.smsaccesser.utils.SimUtils.getSimSlot
 
@@ -30,6 +32,14 @@ class SmsViewModel(context: Context) : ViewModel() {
             if (ContextCompat.checkSelfPermission(
                     context,
                     Manifest.permission.READ_SMS
+                ) == PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.READ_PHONE_STATE
+                ) == PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.READ_CONTACTS
                 ) == PackageManager.PERMISSION_GRANTED
             ) {
                 val cursor = context.contentResolver.query(
@@ -61,6 +71,9 @@ class SmsViewModel(context: Context) : ViewModel() {
                     val subIdColumn = it.getColumnIndex(Telephony.Sms.SUBSCRIPTION_ID)
 
                     while (it.moveToNext()) {
+                        val address = it.getString(addressColumn)
+                        val contactName =
+                            getContactName(context, address ?: "") // Resolve contact name
                         // Fetch SIM Slot Info
                         val subscriptionId = it.getInt(subIdColumn)
                         val simSlot = getSimSlot(context, subscriptionManager, subscriptionId)
@@ -68,7 +81,8 @@ class SmsViewModel(context: Context) : ViewModel() {
                         val message = SmsEntity(
                             id = it.getLong(idColumn),
                             threadId = it.getLong(threadIdColumn),
-                            address = it.getString(addressColumn),
+                            address = address,
+                            contactName = contactName, // Add resolved contact name
                             body = it.getString(bodyColumn),
                             date = it.getLong(dateColumn),
                             type = it.getInt(typeColumn),
@@ -76,8 +90,10 @@ class SmsViewModel(context: Context) : ViewModel() {
                         )
                         smsList.add(message)
                     }
-                    repository.saveMessages(smsList)
+                    repository.saveMessages(smsList) // Use saveMessages for bulk insertion
                 }
+            } else {
+                Log.e("SmsViewModel", "READ_SMS or READ_CONTACTS permission not granted")
             }
             isLoading.value = false
         }

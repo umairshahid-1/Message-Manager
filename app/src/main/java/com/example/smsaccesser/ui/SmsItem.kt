@@ -22,7 +22,7 @@ fun SmsItem(message: SmsEntity) {
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "From: ${message.address ?: "Unknown"}",
+            text = "From: ${message.contactName ?: message.address ?: "Unknown"}", // Show contact name or fallback to address
             style = MaterialTheme.typography.bodySmall
         )
         Spacer(modifier = Modifier.height(4.dp))

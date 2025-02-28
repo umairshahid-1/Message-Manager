@@ -6,16 +6,16 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.database.ContentObserver
+import android.net.Uri
 import android.os.IBinder
 import android.provider.Telephony
-import androidx.work.*
+import android.util.Log
 import com.example.smsaccesser.database.SmsEntity
 import com.example.smsaccesser.database.SmsRepository
-import com.example.smsaccesser.utils.SimUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.util.concurrent.TimeUnit
 
 class SmsService : Service() {
 
@@ -26,7 +26,134 @@ class SmsService : Service() {
         repository = SmsRepository.getInstance(applicationContext)
         createNotificationChannel()
         startForeground(1, createNotification())
-        schedulePeriodicSync()
+
+        // Register the ContentObserver to monitor changes in the SMS database.
+        contentResolver.registerContentObserver(
+            Telephony.Sms.CONTENT_URI,
+            true, // Set to true to observe descendant URIs (e.g., Inbox, Sent)
+            smsContentObserver
+        )
+
+        // Run an initial sync for both new and deleted messages at startup.
+        CoroutineScope(Dispatchers.IO).launch {
+            syncMessagesWithDevice()
+            syncDeletedMessages()
+        }
+    }
+
+    // Updated ContentObserver: on every change, sync both new and deleted messages.
+    private val smsContentObserver = object : ContentObserver(null) {
+        override fun onChange(selfChange: Boolean, uri: Uri?) {
+            super.onChange(selfChange, uri)
+            Log.d("SmsService", "SMS ContentObserver triggered: $uri")
+            CoroutineScope(Dispatchers.IO).launch {
+                syncMessagesWithDevice()
+                syncDeletedMessages()  // This ensures deleted messages are removed in real time.
+            }
+        }
+    }
+
+    // Also trigger a full sync when the service receives a FORCE_SYNC action.
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "FORCE_SYNC") {
+            CoroutineScope(Dispatchers.IO).launch {
+                syncMessagesWithDevice()  // Sync new or updated messages.
+                syncDeletedMessages()       // Also sync deletions immediately.
+            }
+        }
+        return START_STICKY
+    }
+
+    // Sync new and updated messages from the system SMS database into your ROOM database.
+    private suspend fun syncMessagesWithDevice() {
+        Log.d("SmsService", "Syncing messages from device...")
+        val deviceMessageIds = mutableListOf<Long>()
+
+        try {
+            // Get the native SMS messages using a query on Telephony.Sms.CONTENT_URI.
+            val cursor = contentResolver.query(
+                Telephony.Sms.CONTENT_URI,
+                arrayOf(
+                    Telephony.Sms._ID,
+                    Telephony.Sms.ADDRESS,
+                    Telephony.Sms.BODY,
+                    Telephony.Sms.DATE,
+                    Telephony.Sms.TYPE,
+                    Telephony.Sms.THREAD_ID,
+                    Telephony.Sms.SUBSCRIPTION_ID
+                ),
+                null,
+                null,
+                "${Telephony.Sms.DATE} DESC"
+            )
+
+            val deviceMessages = mutableListOf<SmsEntity>()
+            cursor?.use {
+                val idColumn = it.getColumnIndex(Telephony.Sms._ID)
+                val threadIdColumn = it.getColumnIndex(Telephony.Sms.THREAD_ID)
+                val addressColumn = it.getColumnIndex(Telephony.Sms.ADDRESS)
+                val bodyColumn = it.getColumnIndex(Telephony.Sms.BODY)
+                val dateColumn = it.getColumnIndex(Telephony.Sms.DATE)
+                val typeColumn = it.getColumnIndex(Telephony.Sms.TYPE)
+                val subIdColumn = it.getColumnIndex(Telephony.Sms.SUBSCRIPTION_ID)
+
+                while (it.moveToNext()) {
+                    val address = it.getString(addressColumn)
+                    // You may resolve the contact name as before.
+                    val contactName = com.example.smsaccesser.utils.SimUtils.getContactName(
+                        this@SmsService,
+                        address ?: ""
+                    )
+
+                    val smsEntity = SmsEntity(
+                        id = it.getLong(idColumn),
+                        threadId = it.getLong(threadIdColumn),
+                        address = address,
+                        contactName = contactName,
+                        body = it.getString(bodyColumn),
+                        date = it.getLong(dateColumn),
+                        type = it.getInt(typeColumn),
+                        simSlot = com.example.smsaccesser.utils.SimUtils.getSimSlot(
+                            this@SmsService,
+                            getSystemService(TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager,
+                            it.getInt(subIdColumn)
+                        )
+                    )
+                    deviceMessages.add(smsEntity)
+                    deviceMessageIds.add(it.getLong(idColumn))
+                }
+            }
+
+            // Save or update messages in your ROOM database.
+            repository.saveMessages(deviceMessages)
+        } catch (e: Exception) {
+            Log.e("SmsService", "Sync failed: ${e.message}")
+        }
+    }
+
+    // New: Sync deletion of messages from your ROOM database by comparing with the system database.
+    @SuppressLint("Range")
+    private suspend fun syncDeletedMessages() {
+        Log.d("SmsService", "Syncing deletions...")
+        val cursor = contentResolver.query(
+            Telephony.Sms.CONTENT_URI,
+            arrayOf(Telephony.Sms._ID),
+            null,
+            null,
+            null
+        )
+
+        // Gather all native SMS message IDs.
+        val nativeIds = mutableSetOf<Long>()
+        cursor?.use {
+            val idColumn = it.getColumnIndex(Telephony.Sms._ID)
+            while (it.moveToNext()) {
+                nativeIds.add(it.getLong(idColumn))
+            }
+        }
+
+        // Remove messages from the ROOM database that no longer exist in the native database.
+        repository.deleteMissingMessages(nativeIds.toList())
     }
 
     private fun createNotificationChannel() {
@@ -47,120 +174,9 @@ class SmsService : Service() {
             .build()
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        CoroutineScope(Dispatchers.IO).launch {
-            syncDeletedMessages()
-        }
-        listenForNewMessages()
-        return START_STICKY
-    }
-
-    private fun listenForNewMessages() {
-        CoroutineScope(Dispatchers.IO).launch {
-            while (true) {
-                try {
-                    syncMessagesWithDevice()
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-                kotlinx.coroutines.delay(60000) // Wait for 1 minute before syncing again
-            }
-        }
-    }
-
-    private suspend fun syncMessagesWithDevice() {
-        val deviceMessageIds = mutableListOf<Long>()
-
-        // Get SubscriptionManager instance
-        val subscriptionManager =
-            getSystemService(TELEPHONY_SUBSCRIPTION_SERVICE) as android.telephony.SubscriptionManager
-
-        // Query the native SMS database
-        val cursor = contentResolver.query(
-            Telephony.Sms.CONTENT_URI,
-            arrayOf(
-                Telephony.Sms._ID,
-                Telephony.Sms.ADDRESS,
-                Telephony.Sms.BODY,
-                Telephony.Sms.DATE,
-                Telephony.Sms.TYPE,
-                Telephony.Sms.THREAD_ID,
-                Telephony.Sms.SUBSCRIPTION_ID
-            ),
-            null,
-            null,
-            "${Telephony.Sms.DATE} DESC"
-        )
-
-        val deviceMessages = mutableListOf<SmsEntity>()
-        cursor?.use {
-            val idColumn = it.getColumnIndex(Telephony.Sms._ID)
-            val threadIdColumn = it.getColumnIndex(Telephony.Sms.THREAD_ID)
-            val addressColumn = it.getColumnIndex(Telephony.Sms.ADDRESS)
-            val bodyColumn = it.getColumnIndex(Telephony.Sms.BODY)
-            val dateColumn = it.getColumnIndex(Telephony.Sms.DATE)
-            val typeColumn = it.getColumnIndex(Telephony.Sms.TYPE)
-            val subIdColumn = it.getColumnIndex(Telephony.Sms.SUBSCRIPTION_ID)
-
-            while (it.moveToNext()) {
-                val id = it.getLong(idColumn)
-                val threadId = it.getLong(threadIdColumn)
-                val address = it.getString(addressColumn)
-                val body = it.getString(bodyColumn)
-                val date = it.getLong(dateColumn)
-                val type = it.getInt(typeColumn)
-                val subscriptionId = it.getInt(subIdColumn)
-
-                val simSlot =
-                    SimUtils.getSimSlot(this@SmsService, subscriptionManager, subscriptionId)
-
-                val smsEntity = SmsEntity(
-                    id = id,
-                    threadId = threadId,
-                    address = address,
-                    body = body,
-                    date = date,
-                    type = type,
-                    simSlot = simSlot
-                )
-                deviceMessages.add(smsEntity)
-                deviceMessageIds.add(id)
-            }
-        }
-
-        // Sync messages to Room database
-        repository.saveMessages(deviceMessages)
-        repository.deleteMissingMessages(deviceMessageIds)
-    }
-
-    @SuppressLint("Range")
-    private suspend fun syncDeletedMessages() {
-        val cursor = contentResolver.query(
-            Telephony.Sms.CONTENT_URI,
-            arrayOf(Telephony.Sms._ID),
-            null,
-            null,
-            null
-        )
-
-        val nativeIds = mutableSetOf<Long>()
-        cursor?.use {
-            while (it.moveToNext()) {
-                nativeIds.add(it.getLong(it.getColumnIndex(Telephony.Sms._ID)))
-            }
-        }
-
-        repository.deleteMissingMessages(nativeIds.toList())
-    }
-
-    private fun schedulePeriodicSync() {
-        val workRequest = PeriodicWorkRequestBuilder<PeriodicSyncWorker>(15, TimeUnit.MINUTES)
-            .build()
-        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
-            "SmsSyncWorker",
-            ExistingPeriodicWorkPolicy.REPLACE,
-            workRequest
-        )
+    override fun onDestroy() {
+        super.onDestroy()
+        contentResolver.unregisterContentObserver(smsContentObserver)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

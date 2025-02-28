@@ -34,7 +34,11 @@ fun SendSmsScreen(
         )
         TextField(
             value = simSlot,
-            onValueChange = { simSlot = it },
+            onValueChange = { newValue ->
+                if (newValue.text.isEmpty() || newValue.text in listOf("1", "2")) {
+                    simSlot = newValue
+                }
+            },
             label = { Text("SIM Slot (1 or 2)") },
             modifier = Modifier
                 .fillMaxWidth()

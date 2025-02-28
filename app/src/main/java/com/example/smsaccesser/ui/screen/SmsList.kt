@@ -41,7 +41,7 @@ fun SmsList(
 
         LazyColumn(modifier = modifier.padding(16.dp)) {
             groupedMessages.forEach { (senderThread, messagesInThread) ->
-                val sender = senderThread.first ?: "Unknown Sender" // Sender's address
+                val sender = messagesInThread.firstOrNull()?.contactName ?: senderThread.first ?: "Unknown Sender" // Sender's address
 
                 // Thread Header: Display sender only
                 item {

@@ -123,6 +123,10 @@ class MainActivity : ComponentActivity() {
                 ContextCompat.checkSelfPermission(
                     this,
                     Manifest.permission.SEND_SMS
+                ) == PackageManager.PERMISSION_GRANTED &&
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.READ_CONTACTS
                 ) == PackageManager.PERMISSION_GRANTED
     }
 
@@ -144,7 +148,8 @@ class MainActivity : ComponentActivity() {
             arrayOf(
                 Manifest.permission.READ_SMS,
                 Manifest.permission.READ_PHONE_STATE,
-                Manifest.permission.SEND_SMS
+                Manifest.permission.SEND_SMS,
+                Manifest.permission.READ_CONTACTS
             )
         )
     }
